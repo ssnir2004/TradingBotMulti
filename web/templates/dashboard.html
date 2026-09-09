@@ -127,9 +127,11 @@ async function refreshMe() {
 }
 
 let credsFormRendered = false;
+let editingCreds = false;  // true while the "Update IBKR credentials" form is open mid-edit
 
 function renderConnectSection(data) {
   const el = document.getElementById('connect-section');
+  if (editingCreds) return;  // same reasoning as credsFormRendered - don't clobber an in-progress edit on the next poll
   if (!data.has_credentials) {
     // Rendered ONCE and then left alone - refreshMe() polls every 15s and
     // was previously overwriting this innerHTML on every poll, wiping out
@@ -166,7 +168,7 @@ function renderConnectSection(data) {
     <div>${badge(gatewayUp, 'Gateway up', 'Gateway down')} ${badge(portListening, 'Logged in', 'Awaiting login/2FA')} ${badge(executorUp, 'Executor running', 'Executor stopped')}</div>
     <div>`;
   if (!gatewayUp) {
-    html += `<button id="btn-connect">Connect</button>`;
+    html += `<button id="btn-connect">Connect</button> <button id="btn-edit-creds" class="secondary">Update IBKR credentials</button>`;
   } else if (gatewayUp && portListening && !executorUp) {
     html += `<button id="btn-resume">Start trading engine</button> <button id="btn-disconnect" class="secondary">Disconnect</button>`;
   } else if (gatewayUp && !portListening) {
@@ -174,7 +176,7 @@ function renderConnectSection(data) {
   } else {
     html += `<button id="btn-disconnect" class="secondary">Disconnect</button>`;
   }
-  html += `</div></div>`;
+  html += `</div></div><div id="creds-edit-area"></div>`;
   el.innerHTML = html;
 
   const connectBtn = document.getElementById('btn-connect');
@@ -183,6 +185,33 @@ function renderConnectSection(data) {
   if (resumeBtn) resumeBtn.addEventListener('click', async () => { await fetch('/api/resume_executor', { method: 'POST' }); refreshMe(); });
   const disconnectBtn = document.getElementById('btn-disconnect');
   if (disconnectBtn) disconnectBtn.addEventListener('click', async () => { await fetch('/api/disconnect', { method: 'POST' }); refreshMe(); });
+
+  // Only offered while the Gateway is down - editing credentials while a
+  // live session is up would just be confusing (the running Gateway
+  // keeps using whatever it already logged in with until reconnected).
+  const editBtn = document.getElementById('btn-edit-creds');
+  if (editBtn) editBtn.addEventListener('click', () => {
+    editingCreds = true;
+    const area = document.getElementById('creds-edit-area');
+    area.innerHTML = `
+      <form id="creds-edit-form" style="margin-top:12px">
+        <label>IBKR username</label>
+        <input type="text" name="ibkr_username" required>
+        <label>IBKR password</label>
+        <input type="password" name="ibkr_password" required>
+        <div style="margin-top:12px"><button type="submit">Save credentials</button> <button type="button" id="creds-edit-cancel" class="secondary">Cancel</button></div>
+      </form>`;
+    document.getElementById('creds-edit-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await fetch('/api/credentials', { method: 'POST', body: new FormData(e.target) });
+      editingCreds = false;
+      refreshMe();
+    });
+    document.getElementById('creds-edit-cancel').addEventListener('click', () => {
+      editingCreds = false;
+      refreshMe();
+    });
+  });
 }
 
 document.getElementById('settings-form').addEventListener('submit', async (e) => {
