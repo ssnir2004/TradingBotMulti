@@ -31,6 +31,38 @@ IB Gateway itself isn't part of this repo - see `deploy/ibc/` and
 TradingBot's own `DEPLOY.md` for the IBC/Xvfb install steps, which are
 identical here (just live-mode only, one instance per user).
 
+### IB Gateway + IBC install gotchas (found live, first deployment)
+
+The standalone Gateway installer (`ibgateway-*-standalone-linux-x64.sh -q
+-dir /opt/ibgateway`) lays out files flat (`/opt/ibgateway/jars`, `/opt/
+ibgateway/ibgateway.vmoptions`) - but IBC 3.24.2's `ibcstart.sh` expects
+IBKR's older shared-root convention (`<tws_path>/<version>/jars` and a
+`tws.vmoptions` file specifically, even for Gateway). Two one-time fixes
+on the server, not tracked by this repo (they live outside `/opt/
+tradingbotmulti`):
+
+```bash
+sudo ln -s . /opt/ibgateway/1045          # match tws_path/version/jars
+sudo ln -s ibgateway.vmoptions /opt/ibgateway/tws.vmoptions
+```
+
+Also needed (Java AWT/Swing under Xvfb, even headless):
+```bash
+sudo apt install -y libxrender1 libxtst6 libxi6 libxext6
+```
+
+And `/opt/ibc` and `/opt/ibgateway` both need to be writable by whichever
+user actually runs the Gateway (`tradingbotmulti` here, not `root` - the
+installers/unzip run as root by default):
+```bash
+sudo chown -R tradingbotmulti:tradingbotmulti /opt/ibc
+```
+
+**RAM**: see docs/architecture.md's "Why a separate system" - the real
+per-Gateway footprint is ~390-476MB, not the ~59MB the original plan
+assumed. A 2GB swap file (set up during base server provisioning) is what
+makes 2-3 concurrent live connections survive on a 1GB box at all.
+
 ## Deploying
 
 `deploy/` has the systemd units and Caddy config, assuming an `/opt/

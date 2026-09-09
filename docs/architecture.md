@@ -19,22 +19,40 @@ the planning document this repo was scaffolded from.
 
 ## Why a separate system
 
-Measured on TradingBot's existing server (2026-09-09): one IB Gateway
-process (Java+Xvfb+IBC) costs only ~59MB RSS - much cheaper than initially
-assumed. The real weight is the dashboard process itself (~165MB, driven
-by pandas/backtest/PDF/Excel) and a trading-engine process (~26MB). Since
-this system needs no backtest/PDF/Excel at all, splitting the dashboard
-into a separate lightweight process (~100MB) and running the strategy scan
-once (shared) instead of once per account is what makes 3 live users fit
-in 1GB with headroom - see the budget below.
+The original planning pass estimated ~59MB RSS per IB Gateway process,
+based on a measurement that turned out not to be representative - real
+first deployment (2026-09-09, on the actual 1GB `VM.Standard.E2.1.Micro`
+target box) measured a steady-state, fully-logged-in Gateway at
+**~390-476MB** (768MB default JVM heap cap tightened to 384MB, see
+`/opt/ibgateway/ibgateway.vmoptions` on the server - not tracked in this
+repo, a one-time manual tuning step) - matching TradingBot's own
+DEPLOY.md, which already documented "~450-550MB per Gateway JVM" from its
+own production experience. The ~59MB figure should not be trusted for
+capacity planning; the real budget below is.
 
-| Component | Estimate |
+Splitting the dashboard into a separate lightweight process (no pandas/
+backtest/PDF/Excel) and running the strategy scan once (shared) instead of
+once per account still meaningfully helps - just not enough to make 3
+concurrent live users fit inside 956MB of physical RAM without leaning on
+swap:
+
+| Component | Measured (2026-09-09) |
 |---|---|
-| Scanner (1) | ~40MB |
-| Dashboard (1, no PDF/Excel/backtest) | ~100MB |
-| 3x (Gateway ~60MB + Executor ~25MB) | ~255MB |
-| OS + systemd + Caddy + margin | ~150-200MB |
-| **Total** | **~545-595MB of 1GB** - ~400MB headroom |
+| Scanner (1) | ~60-86MB |
+| Dashboard (1, no PDF/Excel/backtest) | ~35-45MB |
+| Per connected user (Gateway ~390MB + Executor ~150MB) | ~540MB |
+| OS + systemd + Caddy + margin | ~120-150MB |
+| **1 user connected** | **~760MB of 956MB physical** - fits |
+| **2 users connected** | **~1.3GB** - ~340MB into the 2GB swap file |
+| **3 users connected** | **~1.8GB** - ~880MB into swap |
+
+A 2GB swap file (set up once during server provisioning) is what makes 2-3
+concurrent live connections survive at all on this box - expect real
+performance degradation (slower Gateway responsiveness, not correctness
+issues) under swap pressure with 3 users connected at once, not a hard
+failure. Tightening the JVM heap further was considered and explicitly
+declined - the risk of Gateway instability from an undersized heap
+outweighs the marginal RAM saved, given swap already covers the gap.
 
 ## Architecture - 4 process types
 
