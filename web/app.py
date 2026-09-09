@@ -252,7 +252,12 @@ def api_settings(
 
 @app.post("/api/credentials")
 def api_credentials(ibkr_username: str = Form(...), ibkr_password: str = Form(...), user: dict = Depends(require_user)):
-    encrypted = secrets_store.encrypt(ibkr_password)
+    # Strips both - a pasted password picking up an invisible trailing
+    # newline/space (common from password managers) silently breaks IBKR
+    # login while looking identical in the input field. Found live: a
+    # user's password worked directly at IBKR but failed here at the
+    # exact same length.
+    encrypted = secrets_store.encrypt(ibkr_password.strip())
     db.set_ibkr_credentials(user["id"], ibkr_username.strip(), encrypted)
     return {"ok": True}
 
