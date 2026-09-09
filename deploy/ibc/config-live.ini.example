@@ -1,0 +1,30 @@
+# Reference only - each user's real config-<user_id>-live.ini is generated
+# automatically by src/gateway_provisioning.py when they click Connect in
+# the dashboard (see that module's _write_ibc_config). You should never
+# need to hand-write one of these; this file just documents the shape.
+
+IbLoginId=their_ibkr_username
+IbPassword=their_ibkr_password
+TradingMode=live
+OverrideTwsApiPort=5001
+
+# ---- unattended operation ----
+AcceptIncomingConnectionAction=accept
+AllowBlindTrading=no
+ReadOnlyLogin=no
+AcceptNonBrokerageAccountWarning=yes
+DismissPasswordExpiryWarning=yes
+DismissNSEComplianceNotice=yes
+ExistingSessionDetectedAction=primary
+
+# ---- the 2FA reality check ----
+# IBC can automate the username/password fields but cannot tap "Approve"
+# on the user's own phone for a 2FA push - this just controls how long IBC
+# waits for that before giving up. The dashboard's Connect flow polls
+# port_listening and only starts the Executor once the Gateway is really
+# up (see src/gateway_provisioning.py's own docstring).
+SecondFactorAuthenticationTimeout=180
+SecondFactorDevice=IB Key
+
+# ---- logging ----
+LogComponents=open

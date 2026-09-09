@@ -1,0 +1,15 @@
+[Unit]
+Description=TradingBotMulti Scanner - shared strategy signal detection (scanner.py)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tradingbotmulti
+WorkingDirectory=/opt/tradingbotmulti
+ExecStart=/opt/tradingbotmulti/.venv/bin/python /opt/tradingbotmulti/scanner.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

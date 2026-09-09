@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}TradingBotMulti{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  {% if user %}
+  <nav class="topnav">
+    <div class="brand">TradingBotMulti</div>
+    <div class="nav-links">
+      <a href="/">Dashboard</a>
+      {% if user.role == 'admin' %}
+        <a href="/admin/overview">Admin Overview</a>
+        <a href="/admin/users">Users</a>
+      {% endif %}
+    </div>
+    <div class="nav-user">
+      <span>{{ user.username }} ({{ user.role }})</span>
+      <form method="post" action="/logout" style="display:inline">
+        <button type="submit" class="link-btn">Log out</button>
+      </form>
+    </div>
+  </nav>
+  {% endif %}
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

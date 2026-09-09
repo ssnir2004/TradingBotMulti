@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Users - TradingBotMulti{% endblock %}
+{% block content %}
+<h2>Users</h2>
+
+<div class="card">
+  <table>
+    <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Created</th><th></th></tr></thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td>{{ u.username }}</td>
+        <td>
+          <form method="post" action="/admin/users/{{ u.id }}/role" style="display:inline">
+            <select name="role" onchange="this.form.submit()" {% if u.id == user.id %}disabled{% endif %}>
+              <option value="trader" {% if u.role == 'trader' %}selected{% endif %}>trader</option>
+              <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>admin</option>
+            </select>
+          </form>
+        </td>
+        <td><span class="badge {{ 'ok' if u.is_active else 'bad' }}">{{ 'active' if u.is_active else 'disabled' }}</span></td>
+        <td class="muted">{{ u.created_at }}</td>
+        <td>
+          <form method="post" action="/admin/users/{{ u.id }}/toggle_active" style="display:inline">
+            <button type="submit" class="secondary">{{ 'Disable' if u.is_active else 'Enable' }}</button>
+          </form>
+          {% if u.id != user.id %}
+          <form method="post" action="/admin/users/{{ u.id }}/delete" style="display:inline" onsubmit="return confirm('Delete {{ u.username }}? This also removes their positions/trade history.')">
+            <button type="submit" class="danger">Delete</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card form-card" style="margin:0">
+  <h3>Add user</h3>
+  <form method="post" action="/admin/users/create">
+    <label>Username</label>
+    <input type="text" name="username" required>
+    <label>Password</label>
+    <input type="password" name="password" required minlength="8">
+    <label>Role</label>
+    <select name="role">
+      <option value="trader" selected>trader</option>
+      <option value="admin">admin</option>
+    </select>
+    <div style="margin-top:14px"><button type="submit">Create user</button></div>
+  </form>
+</div>
+{% endblock %}

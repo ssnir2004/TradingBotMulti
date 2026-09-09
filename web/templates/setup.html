@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Initial setup - TradingBotMulti{% endblock %}
+{% block content %}
+<div class="card form-card">
+  <h2>Create the admin account</h2>
+  <p class="muted">No users exist yet - the first account created here becomes the admin.</p>
+  <form method="post" action="/setup">
+    <label>Username</label>
+    <input type="text" name="username" required autofocus>
+    <label>Password</label>
+    <input type="password" name="password" required minlength="8">
+    <div style="margin-top:18px"><button type="submit">Create admin account</button></div>
+  </form>
+</div>
+{% endblock %}

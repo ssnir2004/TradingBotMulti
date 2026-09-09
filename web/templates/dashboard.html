@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - TradingBotMulti{% endblock %}
+{% block content %}
+
+<div class="card">
+  <div class="row">
+    <h2>Shared scan &mdash; {{ strategy_name }}</h2>
+    <span id="scan-status" class="badge muted">loading...</span>
+  </div>
+  <table>
+    <thead><tr><th>Symbol</th><th>Side</th><th>Pass</th><th>Price</th><th>D1</th><th>D2</th><th>D3</th><th>I1</th><th>I2</th><th>I3</th><th>RVOL</th><th>Updated</th></tr></thead>
+    <tbody id="scan-body"><tr><td colspan="12" class="muted">Loading&hellip;</td></tr></tbody>
+  </table>
+</div>
+
+{% if all_statuses is defined %}
+<div class="card">
+  <h2>Connection status (admin only)</h2>
+  <table>
+    <thead><tr><th>User</th><th>Role</th><th>Gateway</th><th>Executor</th><th>Trading</th><th>Last cycle</th></tr></thead>
+    <tbody id="admin-status-body"><tr><td colspan="6" class="muted">Loading&hellip;</td></tr></tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>My account</h2>
+
+  <div id="connect-section"></div>
+
+  <div class="grid-2">
+    <div>
+      <h3>Positions</h3>
+      <table>
+        <thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry</th><th>Stop</th><th>R</th></tr></thead>
+        <tbody id="positions-body"><tr><td colspan="6" class="muted">&mdash;</td></tr></tbody>
+      </table>
+
+      <h3 style="margin-top:22px">Recent trades</h3>
+      <table>
+        <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Size</th><th>Fill</th><th>Status</th></tr></thead>
+        <tbody id="trades-body"><tr><td colspan="6" class="muted">&mdash;</td></tr></tbody>
+      </table>
+    </div>
+
+    <div>
+      <h3>Risk settings</h3>
+      <form id="settings-form">
+        <label>Portfolio value ($)</label>
+        <input type="number" name="portfolio_value" id="f-portfolio-value" step="1">
+        <label>Max risk per trade (%)</label>
+        <input type="number" name="max_risk_pct" id="f-max-risk" step="0.1">
+        <label>Max trades per day</label>
+        <input type="number" name="max_trades_per_day" id="f-max-trades" step="1">
+        <div class="toggle-row">
+          <input type="checkbox" name="trading_enabled" id="f-trading-enabled">
+          <label style="margin:0">Trading enabled</label>
+        </div>
+        <button type="submit">Save settings</button>
+      </form>
+      <div id="settings-saved" class="muted" style="margin-top:8px"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const fmt = (n, d=2) => (n === null || n === undefined) ? '&mdash;' : Number(n).toFixed(d);
+const badge = (ok, textOk, textBad) => `<span class="badge ${ok ? 'ok' : 'bad'}">${ok ? textOk : textBad}</span>`;
+
+async function refreshScan() {
+  const res = await fetch('/api/scan');
+  const data = await res.json();
+  const status = data.status || {};
+  const statusEl = document.getElementById('scan-status');
+  statusEl.textContent = status.status || 'unknown';
+  statusEl.className = 'badge ' + (status.status === 'ok' ? 'ok' : status.status === 'running' ? 'warn' : 'muted');
+
+  const rows = data.results || [];
+  const body = document.getElementById('scan-body');
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="12" class="muted">No candidates right now.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(r => {
+    const f = r.filters_detail || {};
+    const tick = (v) => v === true ? '<span class="pos">&check;</span>' : v === false ? '<span class="neg">&times;</span>' : '&mdash;';
+    return `<tr>
+      <td>${r.symbol}</td><td>${r.side}</td><td>${r.pass ? badge(true, 'PASS', '') : ''}</td>
+      <td>${fmt(r.price)}</td>
+      <td>${tick(f.D1)}</td><td>${tick(f.D2)}</td><td>${tick(f.D3)}</td>
+      <td>${tick(f.I1)}</td><td>${tick(f.I2)}</td><td>${tick(f.I3)}</td>
+      <td>${fmt(f.rvol)}</td><td class="muted">${(r.generated_at || '').slice(11, 19)}</td>
+    </tr>`;
+  }).join('');
+}
+
+let settingsLoaded = false;
+
+async function refreshMe() {
+  const res = await fetch('/api/me');
+  const data = await res.json();
+
+  if (!settingsLoaded) {
+    const s = data.settings;
+    document.getElementById('f-portfolio-value').value = s.portfolio_value;
+    document.getElementById('f-max-risk').value = s.max_risk_pct;
+    document.getElementById('f-max-trades').value = s.max_trades_per_day;
+    document.getElementById('f-trading-enabled').checked = !!s.trading_enabled;
+    settingsLoaded = true;
+  }
+
+  const posBody = document.getElementById('positions-body');
+  posBody.innerHTML = data.positions.length ? data.positions.map(p => `
+    <tr><td>${p.symbol}</td><td>${p.side}</td><td>${p.qty}</td>
+    <td>${fmt(p.entry_price)}</td><td>${fmt(p.stop_price)}</td>
+    <td class="${p.r_multiple >= 0 ? 'pos' : 'neg'}">${fmt(p.r_multiple)}R</td></tr>
+  `).join('') : '<tr><td colspan="6" class="muted">No open positions.</td></tr>';
+
+  const tradesBody = document.getElementById('trades-body');
+  const trades = (data.trades || []).slice(0, 10);
+  tradesBody.innerHTML = trades.length ? trades.map(t => `
+    <tr><td class="muted">${(t.timestamp || '').slice(5, 16)}</td><td>${t.symbol}</td><td>${t.side}</td>
+    <td>${t.size}</td><td>${fmt(t.fill_price)}</td><td>${t.status}</td></tr>
+  `).join('') : '<tr><td colspan="6" class="muted">No trades yet.</td></tr>';
+
+  renderConnectSection(data);
+}
+
+function renderConnectSection(data) {
+  const el = document.getElementById('connect-section');
+  if (!data.has_credentials) {
+    el.innerHTML = `
+      <p class="muted">Connect your live IBKR account to start trading.</p>
+      <form id="creds-form">
+        <label>IBKR username</label>
+        <input type="text" name="ibkr_username" required>
+        <label>IBKR password</label>
+        <input type="password" name="ibkr_password" required>
+        <div style="margin-top:12px"><button type="submit">Save credentials</button></div>
+      </form>`;
+    document.getElementById('creds-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await fetch('/api/credentials', { method: 'POST', body: new FormData(e.target) });
+      refreshMe();
+    });
+    return;
+  }
+
+  const gw = data.gateway_status || {};
+  const gatewayUp = !!gw.gateway_active;
+  const portListening = !!gw.port_listening;
+  const executorUp = !!gw.executor_active;
+
+  let html = `<div class="row">
+    <div>${badge(gatewayUp, 'Gateway up', 'Gateway down')} ${badge(portListening, 'Logged in', 'Awaiting login/2FA')} ${badge(executorUp, 'Executor running', 'Executor stopped')}</div>
+    <div>`;
+  if (!gatewayUp) {
+    html += `<button id="btn-connect">Connect</button>`;
+  } else if (gatewayUp && portListening && !executorUp) {
+    html += `<button id="btn-resume">Start trading engine</button> <button id="btn-disconnect" class="secondary">Disconnect</button>`;
+  } else if (gatewayUp && !portListening) {
+    html += `<span class="muted">Approve the 2FA push on your phone&hellip;</span> <button id="btn-disconnect" class="secondary">Disconnect</button>`;
+  } else {
+    html += `<button id="btn-disconnect" class="secondary">Disconnect</button>`;
+  }
+  html += `</div></div>`;
+  el.innerHTML = html;
+
+  const connectBtn = document.getElementById('btn-connect');
+  if (connectBtn) connectBtn.addEventListener('click', async () => { await fetch('/api/connect', { method: 'POST' }); refreshMe(); });
+  const resumeBtn = document.getElementById('btn-resume');
+  if (resumeBtn) resumeBtn.addEventListener('click', async () => { await fetch('/api/resume_executor', { method: 'POST' }); refreshMe(); });
+  const disconnectBtn = document.getElementById('btn-disconnect');
+  if (disconnectBtn) disconnectBtn.addEventListener('click', async () => { await fetch('/api/disconnect', { method: 'POST' }); refreshMe(); });
+}
+
+document.getElementById('settings-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = new FormData(e.target);
+  const body = new FormData();
+  body.set('portfolio_value', form.get('portfolio_value'));
+  body.set('max_risk_pct', form.get('max_risk_pct'));
+  body.set('max_trades_per_day', form.get('max_trades_per_day'));
+  body.set('trading_enabled', document.getElementById('f-trading-enabled').checked ? 'true' : 'false');
+  await fetch('/api/settings', { method: 'POST', body });
+  document.getElementById('settings-saved').textContent = 'Saved.';
+  setTimeout(() => { document.getElementById('settings-saved').textContent = ''; }, 2000);
+});
+
+{% if all_statuses is defined %}
+async function refreshAdminStrip() {
+  const res = await fetch('/admin/api/connection_status');
+  const data = await res.json();
+  const body = document.getElementById('admin-status-body');
+  body.innerHTML = (data.statuses || []).map(s => `
+    <tr><td>${s.username}</td><td>${s.role}</td>
+    <td>${badge(s.gateway_active, 'up', 'down')}</td>
+    <td>${badge(s.executor_active, 'up', 'down')}</td>
+    <td>${badge(s.trading_enabled, 'on', 'off')}</td>
+    <td class="muted">${s.last_cycle_status || '&mdash;'} ${s.last_cycle_at ? '(' + s.last_cycle_at.slice(11, 19) + ')' : ''}</td></tr>
+  `).join('');
+}
+refreshAdminStrip();
+setInterval(refreshAdminStrip, 15000);
+{% endif %}
+
+refreshScan();
+refreshMe();
+setInterval(refreshScan, 15000);
+setInterval(refreshMe, 15000);
+</script>
+{% endblock %}

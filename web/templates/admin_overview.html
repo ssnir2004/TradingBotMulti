@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Admin Overview - TradingBotMulti{% endblock %}
+{% block content %}
+<h2>Admin Overview</h2>
+<p class="muted">Full P&amp;L and positions for every user - not linked from any regular user's navigation.</p>
+<div id="overview"></div>
+
+<script>
+const fmt = (n, d=2) => (n === null || n === undefined) ? '&mdash;' : Number(n).toFixed(d);
+
+async function refresh() {
+  const res = await fetch('/admin/api/overview');
+  const data = await res.json();
+  const el = document.getElementById('overview');
+  el.innerHTML = data.users.map(u => {
+    const posRows = u.positions.length ? u.positions.map(p => `
+      <tr><td>${p.symbol}</td><td>${p.side}</td><td>${p.qty}</td><td>${fmt(p.entry_price)}</td>
+      <td>${fmt(p.stop_price)}</td><td class="${p.r_multiple >= 0 ? 'pos' : 'neg'}">${fmt(p.r_multiple)}R</td></tr>
+    `).join('') : '<tr><td colspan="6" class="muted">No open positions.</td></tr>';
+
+    const tradeRows = u.recent_trades.slice(0, 10).map(t => `
+      <tr><td class="muted">${(t.timestamp||'').slice(5,16)}</td><td>${t.symbol}</td><td>${t.side}</td><td>${t.size}</td><td>${fmt(t.fill_price)}</td><td>${t.status}</td></tr>
+    `).join('') || '<tr><td colspan="6" class="muted">No trades yet.</td></tr>';
+
+    const es = u.executor_status || {};
+
+    return `<div class="card">
+      <div class="row">
+        <h3>${u.username} <span class="badge ${u.is_active ? 'ok' : 'bad'}">${u.is_active ? 'active' : 'disabled'}</span> <span class="badge muted">${u.role}</span></h3>
+        <div class="muted">Portfolio $${fmt(u.settings.portfolio_value, 0)} &middot; risk ${fmt(u.settings.max_risk_pct,1)}% &middot; last cycle: ${es.last_cycle_status || '&mdash;'}</div>
+      </div>
+      <div class="grid-2">
+        <div><h4>Positions</h4><table><thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry</th><th>Stop</th><th>R</th></tr></thead><tbody>${posRows}</tbody></table></div>
+        <div><h4>Recent trades</h4><table><thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Size</th><th>Fill</th><th>Status</th></tr></thead><tbody>${tradeRows}</tbody></table></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+refresh();
+setInterval(refresh, 20000);
+</script>
+{% endblock %}

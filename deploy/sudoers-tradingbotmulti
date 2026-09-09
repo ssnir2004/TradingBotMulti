@@ -1,0 +1,22 @@
+# Scoped sudo rules for the dashboard's per-user Connect/Disconnect
+# controls (src/gateway_provisioning.py). Lets the `tradingbotmulti` user
+# start/stop ONLY these specific systemd unit patterns, with no password
+# and no other command access. Nothing else is granted: no shell, no other
+# systemctl verbs, no other units.
+#
+# Install:
+#   sudo cp deploy/sudoers-tradingbotmulti /etc/sudoers.d/tradingbotmulti
+#   sudo chmod 440 /etc/sudoers.d/tradingbotmulti
+#   sudo visudo -c   # validates syntax before it's trusted
+#
+# If `which systemctl` on your server prints a different path than
+# /usr/bin/systemctl, update the paths below to match before installing.
+
+# Every user's own Gateway/Executor - instantiated units, one per user_id
+# (%i), started/stopped from the dashboard's Connect/Disconnect/"Start
+# trading engine" buttons. The user_id in the unit name is a plain integer
+# (that user's own users.id) - never user-supplied text.
+tradingbotmulti ALL=(root) NOPASSWD: /usr/bin/systemctl start ibgateway-live@*.service
+tradingbotmulti ALL=(root) NOPASSWD: /usr/bin/systemctl stop ibgateway-live@*.service
+tradingbotmulti ALL=(root) NOPASSWD: /usr/bin/systemctl start executor@*.service
+tradingbotmulti ALL=(root) NOPASSWD: /usr/bin/systemctl stop executor@*.service

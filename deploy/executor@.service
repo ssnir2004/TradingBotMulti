@@ -1,0 +1,20 @@
+[Unit]
+Description=TradingBotMulti Executor for user %i (executor.py --user-id %i)
+After=ibgateway-live@%i.service network-online.target
+Wants=network-online.target
+Requires=ibgateway-live@%i.service
+
+[Service]
+Type=simple
+User=tradingbotmulti
+WorkingDirectory=/opt/tradingbotmulti
+# always, not on-failure - started only via the dashboard's "Start trading
+# engine" button (web/app.py's /api/resume_executor -> src/gateway_
+# provisioning.resume_executor), once that user's own Gateway shows
+# port_listening=True (i.e. 2FA was actually approved).
+ExecStart=/opt/tradingbotmulti/.venv/bin/python /opt/tradingbotmulti/executor.py --user-id %i
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

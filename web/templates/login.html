@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Log in - TradingBotMulti{% endblock %}
+{% block content %}
+<div class="card form-card">
+  <h2>Log in</h2>
+  <form method="post" action="/login">
+    <label>Username</label>
+    <input type="text" name="username" required autofocus>
+    <label>Password</label>
+    <input type="password" name="password" required>
+    {% if error %}<div class="error">Invalid username or password.</div>{% endif %}
+    <div style="margin-top:18px"><button type="submit">Log in</button></div>
+  </form>
+</div>
+{% endblock %}
