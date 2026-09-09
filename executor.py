@@ -34,7 +34,7 @@ from zoneinfo import ZoneInfo
 from dotenv import dotenv_values
 from ib_async import Stock, StopOrder
 
-from src import db, market_data, position_mgmt, strategy
+from src import db, es_filter, market_data, position_mgmt, strategy
 from src.ibkr_client import IBKRClient, belongs_to_account, scoped_positions
 from src.notify import notify
 
@@ -47,6 +47,10 @@ CLOSED_START = dt_time(16, 0)
 # signal - ignored rather than acted on (see docs/architecture.md).
 SCAN_RESULT_MAX_AGE_MINUTES = 2
 SUBPROCESS_TIMEOUT = 40
+# Off by default - matches TradingBot's own live behavior today (this
+# gate needs real CME futures market-data entitlement no connected
+# account currently has, see src/es_filter.py's own docstring).
+ES_VWAP_FILTER_ENABLED = False
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -176,6 +180,11 @@ def check_stop_outs(user_id: int, ib, positions: list[dict]) -> list[dict]:
 
 # ---------------------------------------------------------------- step 2 ---
 def manage_position(user_id: int, ib, pos: dict, rules: dict) -> dict:
+    """ORB Long v4.2's "no_stop_delayed_trail" state machine: the real
+    hard stop placed at entry (see entry_scan) protects the position
+    untouched until MFE clears exit.trailing_trigger_R, at which point
+    swing-low trailing takes over completely - the hard stop is never
+    consulted again once trailing has activated."""
     exit_cfg = rules["exit"]
     side = pos.get("side", "long")
     price = market_data.current_price(pos["symbol"])
@@ -183,39 +192,41 @@ def manage_position(user_id: int, ib, pos: dict, rules: dict) -> dict:
         return pos
 
     entry = pos["entry_price"]
-    initial_risk = (pos["initial_stop"] - entry) if side == "short" else (entry - pos["initial_stop"])
+    initial_risk = entry - pos["initial_stop"]
     if initial_risk <= 0:
         return pos
-    r_multiple = ((entry - price) if side == "short" else (price - entry)) / initial_risk
+    r_multiple = (price - entry) / initial_risk
     pos["r_multiple"] = r_multiple
-    pos["mae_price"] = (min(pos.get("mae_price") or entry, price) if side == "long"
-                         else max(pos.get("mae_price") or entry, price))
+    pos["mae_price"] = min(pos.get("mae_price") or entry, price)
+    pos["mfe_price"] = max(pos.get("mfe_price") or entry, price)
 
-    if pos["state"] == "pre_breakeven":
-        decision = position_mgmt.breakeven_decision(pos, exit_cfg, r_multiple)
-        if decision["action"] == "breakeven_flip":
-            _cancel_stop(ib, pos.get("stop_order_id"))
-            pos["stop_order_id"] = _place_stop(ib, pos["symbol"], pos["qty"], decision["new_stop_price"], side)
-            pos["stop_price"] = decision["new_stop_price"]
-            pos["state"] = decision["new_state"]
-            notify(f"BE {pos['symbol']}", f"stop -> ${entry:.2f}")
-            db.log_execution(user_id, "breakeven_flip", symbol=pos["symbol"], side=side, new_stop=entry)
-
-    if pos["state"] == "post_breakeven":
+    if not pos.get("trail_activated"):
+        mfe_r = (pos["mfe_price"] - entry) / initial_risk
+        decision = position_mgmt.trailing_activation_decision(pos, mfe_r, exit_cfg)
+        if decision["action"] == "activate_trailing":
+            pos["trail_activated"] = True
+            bars = market_data.fetch_5min_bars(pos["symbol"])
+            candidate = strategy.low_of_last_n_bars(bars, 2) if bars is not None and len(bars) >= 2 else None
+            trail_decision = position_mgmt.trailing_stop_decision(pos, candidate)
+            new_stop_note = pos.get("stop_price", pos["initial_stop"])
+            if trail_decision["action"] == "trail_stop":
+                _cancel_stop(ib, pos.get("stop_order_id"))
+                pos["stop_order_id"] = _place_stop(ib, pos["symbol"], pos["qty"], trail_decision["new_stop_price"], side)
+                pos["stop_price"] = trail_decision["new_stop_price"]
+                new_stop_note = trail_decision["new_stop_price"]
+            notify(f"TRAILING ACTIVATED {pos['symbol']}", f"MFE cleared {exit_cfg.get('trailing_trigger_R', 1.20)}R, stop -> ${new_stop_note:.2f}")
+            db.log_execution(user_id, "trail_activated", symbol=pos["symbol"], at_r=exit_cfg.get("trailing_trigger_R", 1.20), stop=new_stop_note)
+    else:
         bars = market_data.fetch_5min_bars(pos["symbol"])
-        swing_stop_candidate = None
-        if bars is not None and len(bars) > 5:
-            swing = market_data.find_latest_swing_high(bars) if side == "short" else market_data.find_latest_swing_low(bars)
-            if swing is not None:
-                swing_stop_candidate = (swing + 0.01) if side == "short" else (swing - 0.01)
-        decision = position_mgmt.trailing_stop_decision(pos, swing_stop_candidate)
+        candidate = strategy.low_of_last_n_bars(bars, 2) if bars is not None and len(bars) >= 2 else None
+        decision = position_mgmt.trailing_stop_decision(pos, candidate)
         if decision["action"] == "trail_stop":
             _cancel_stop(ib, pos.get("stop_order_id"))
             pos["stop_order_id"] = _place_stop(ib, pos["symbol"], pos["qty"], decision["new_stop_price"], side)
             old_stop = pos.get("stop_price", pos["initial_stop"])
             pos["stop_price"] = decision["new_stop_price"]
             notify(f"TRAIL {pos['symbol']}", f"stop ${old_stop:.2f} -> ${decision['new_stop_price']:.2f}")
-            db.log_execution(user_id, "trail_stop", symbol=pos["symbol"], side=side, old=old_stop, new=decision["new_stop_price"])
+            db.log_execution(user_id, "trail_stop", symbol=pos["symbol"], old=old_stop, new=decision["new_stop_price"])
 
     if pos["qty"] > 0:
         db.upsert_position(user_id, pos)
@@ -224,13 +235,20 @@ def manage_position(user_id: int, ib, pos: dict, rules: dict) -> dict:
 
 # ---------------------------------------------------------------- step 4 ---
 def entry_scan(user_id: int, ib, positions: list[dict], rules: dict, settings: dict, username: str) -> list[dict]:
+    """long_only (ORB Long v4.2 - see strategy_config.json). The initial
+    stop comes straight off the Scanner's own signal_detail (the gap
+    candle's/retest bar's own low, already floored/widened by strategy.
+    evaluate_orb_entry) - not a generic stop rule. The REAL resting stop
+    placed at the broker is the wider hard_stop_R level (computed off the
+    ACTUAL fill price, matching manage_position's own r_multiple math),
+    not the tight initial_stop itself - see exit.hard_stop_R."""
     now_et = datetime.now(ET)
     if not _within_entry_window(rules, now_et):
         return positions
 
     max_concurrent = rules["risk"]["max_concurrent_positions"]
-    direction = rules.get("direction", "long_only")
-    sides = {"long_only": ["long"], "short_only": ["short"], "both": ["long", "short"]}.get(direction, ["long"])
+    side = "long"
+    action = "BUY"
 
     held_symbols = {p.contract.symbol for p in scoped_positions(ib) if p.position != 0}
     held_symbols |= {p["symbol"] for p in positions}
@@ -239,80 +257,92 @@ def entry_scan(user_id: int, ib, positions: list[dict], rules: dict, settings: d
     max_risk_pct = settings["max_risk_pct"]
     max_trades_per_day = settings["max_trades_per_day"]
     max_position_pct = rules["risk"]["max_position_size_pct_of_portfolio"] / 100
+    hard_stop_r = rules["exit"].get("hard_stop_R")
 
-    scan_rows = db.get_scan_results(passing_only=True)
+    side_positions = [p for p in positions if p.get("side", "long") == side]
+    if len(side_positions) >= max_concurrent or db.count_todays_entries(user_id, side) >= max_trades_per_day:
+        return positions
+
+    scan_rows = [r for r in db.get_scan_results(passing_only=True) if r["side"] == side]
     max_age = timedelta(minutes=SCAN_RESULT_MAX_AGE_MINUTES)
+    es_direction = es_filter.fetch_live_direction(ib) if ES_VWAP_FILTER_ENABLED and rules.get("es_vwap_filter") else None
 
-    for side in sides:
-        action = "BUY" if side == "long" else "SELL"
-        side_positions = [p for p in positions if p.get("side", "long") == side]
-        if len(side_positions) >= max_concurrent:
+    for row in scan_rows:
+        if len(side_positions) >= max_concurrent or db.count_todays_entries(user_id, side) >= max_trades_per_day:
+            break
+        ticker = row["symbol"]
+        if ticker in held_symbols:
             continue
-        if db.count_todays_entries(user_id, side) >= max_trades_per_day:
+        try:
+            generated_at = datetime.fromisoformat(row["generated_at"])
+        except ValueError:
+            continue
+        if now_et - generated_at.replace(tzinfo=ET) > max_age:
             continue
 
-        candidates = [r for r in scan_rows if r["side"] == side]
-        for row in candidates:
-            if len(side_positions) >= max_concurrent:
-                break
-            if db.count_todays_entries(user_id, side) >= max_trades_per_day:
-                break
-            ticker = row["symbol"]
-            if ticker in held_symbols:
-                continue
-            try:
-                generated_at = datetime.fromisoformat(row["generated_at"])
-            except ValueError:
-                continue
-            if now_et - generated_at.replace(tzinfo=ET) > max_age:
+        detail = row["filters_detail"]
+        price = detail.get("price")
+        initial_stop = row["signal_detail"].get("initial_stop")
+        if price is None or initial_stop is None:
+            continue
+        r = price - initial_stop
+        if r <= 0:
+            continue
+
+        if ES_VWAP_FILTER_ENABLED and rules.get("es_vwap_filter"):
+            gate = es_filter.check(es_direction)
+            if not gate["allowed"]:
+                db.log_execution(user_id, "entry_rejected", reason="es_vwap_filter", symbol=ticker, detail=gate.get("reason"))
                 continue
 
-            detail = row["filters_detail"]
-            price = detail.get("price")
-            if price is None:
-                continue
-            initial_stop = strategy.resolve_initial_stop(detail, rules, side)
-            r = (initial_stop - price) if side == "short" else (price - initial_stop)
-            if r <= 0:
-                continue
+        risk_dollars = portfolio_value * (max_risk_pct / 100)
+        size_by_risk = math.floor(risk_dollars / r)
+        size_by_cap = math.floor(portfolio_value * max_position_pct / price)
+        size = min(size_by_risk, size_by_cap)
+        if size < 1:
+            continue
 
-            risk_dollars = portfolio_value * (max_risk_pct / 100)
-            size_by_risk = math.floor(risk_dollars / r)
-            size_by_cap = math.floor(portfolio_value * max_position_pct / price)
-            size = min(size_by_risk, size_by_cap)
-            if size < 1:
+        proc = subprocess.run(
+            [sys.executable, str(PROJECT_DIR / "trade_exec.py"), "--user-id", str(user_id),
+             "--symbol", ticker, "--side", action, "--size", str(size)],
+            capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT,
+        )
+        db.log_execution(user_id, "entry_attempt", symbol=ticker, qty=size, price=price, stdout=proc.stdout)
+        if proc.returncode != 0:
+            broker_pos = _broker_position(ib, ticker)
+            if broker_pos is None:
                 continue
+            fill_qty, fill_price = abs(broker_pos["qty"]), broker_pos["avg_cost"]
+            db.log_execution(user_id, "delayed_fill_recovered", symbol=ticker, qty=fill_qty, price=fill_price)
+            notify(f"[{username}] Delayed fill recovered: {ticker}",
+                   f"order timed out but broker shows {fill_qty} shares @ ${fill_price:.2f} - now tracked with a stop")
+        else:
+            fill_qty, fill_price = size, price
 
-            proc = subprocess.run(
-                [sys.executable, str(PROJECT_DIR / "trade_exec.py"), "--user-id", str(user_id),
-                 "--symbol", ticker, "--side", action, "--size", str(size)],
-                capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT,
-            )
-            db.log_execution(user_id, "entry_attempt", symbol=ticker, side=side, qty=size, price=price, stdout=proc.stdout)
-            if proc.returncode != 0:
-                broker_pos = _broker_position(ib, ticker)
-                if broker_pos is None:
-                    continue
-                fill_qty, fill_price = abs(broker_pos["qty"]), broker_pos["avg_cost"]
-                db.log_execution(user_id, "delayed_fill_recovered", symbol=ticker, side=side, qty=fill_qty, price=fill_price)
-                notify(f"[{username}] Delayed fill recovered: {ticker}",
-                       f"order timed out but broker shows {fill_qty} shares @ ${fill_price:.2f} - now tracked with a stop")
-            else:
-                fill_qty, fill_price = size, price
+        # The real resting stop is the wider hard_stop_R level, sized off
+        # the ACTUAL fill (not the pre-fill signal price) - the tight
+        # initial_stop is kept only as the reference manage_position's
+        # trailing-validity check (trailing_stop_decision) compares
+        # against, never placed at the broker itself.
+        order_stop_price = initial_stop
+        if hard_stop_r is not None:
+            initial_risk = fill_price - initial_stop
+            order_stop_price = fill_price - hard_stop_r * initial_risk
 
-            stop_order_id = _place_stop(ib, ticker, fill_qty, initial_stop, side)
-            new_position = {
-                "symbol": ticker, "side": side, "entry_price": fill_price,
-                "entry_time": now_et.isoformat(timespec="seconds"), "qty": fill_qty,
-                "initial_stop": initial_stop, "stop_price": initial_stop, "stop_order_id": stop_order_id,
-                "state": "pre_breakeven", "r_multiple": 0.0, "mae_price": fill_price,
-            }
-            db.upsert_position(user_id, new_position)
-            positions.append(new_position)
-            side_positions.append(new_position)
-            held_symbols.add(ticker)
-            notify(f"[{username}] {action} {ticker}", f"@ ${fill_price:.2f}, stop ${initial_stop:.2f}, qty {fill_qty}")
-            db.log_execution(user_id, "entry", symbol=ticker, side=side, price=fill_price, stop=initial_stop, qty=fill_qty)
+        stop_order_id = _place_stop(ib, ticker, fill_qty, order_stop_price, side)
+        new_position = {
+            "symbol": ticker, "side": side, "entry_price": fill_price,
+            "entry_time": now_et.isoformat(timespec="seconds"), "qty": fill_qty,
+            "initial_stop": initial_stop, "stop_price": order_stop_price, "stop_order_id": stop_order_id,
+            "r_multiple": 0.0, "mae_price": fill_price, "mfe_price": fill_price,
+            "trail_activated": False,
+        }
+        db.upsert_position(user_id, new_position)
+        positions.append(new_position)
+        side_positions.append(new_position)
+        held_symbols.add(ticker)
+        notify(f"[{username}] {action} {ticker}", f"@ ${fill_price:.2f}, hard stop ${order_stop_price:.2f}, qty {fill_qty}")
+        db.log_execution(user_id, "entry", symbol=ticker, price=fill_price, initial_stop=initial_stop, hard_stop=order_stop_price, qty=fill_qty)
 
     return positions
 

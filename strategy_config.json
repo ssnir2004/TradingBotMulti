@@ -1,40 +1,59 @@
 {
-  "strategy_name": "Long Breakout Conservative",
+  "strategy_name": "ORB Long v4.2 (Hard Stop 2.5R + Early Trailing)",
   "direction": "long_only",
-  "trade_timeframe": "5m",
+  "es_vwap_filter": true,
+
+  "opening_range": {
+    "or_timeframe": "15m",
+    "confirm_timeframe": "5m",
+    "entry_timeframe": "5m",
+    "session_open_et": "09:30"
+  },
 
   "universe_filters": {
     "index": "S&P 500",
     "min_price_usd": 3.0
   },
 
-  "daily_filters": {
-    "D1_above_prior_day_high": true,
-    "D2_prior_close_above_sma200": true,
-    "D3_min_gap_pct_from_prior_close": 3.0
+  "volatility_filters": {
+    "V1_rvol_min": 2.0,
+    "V1_rvol_lookback_days": 14,
+    "V2_atr_period": 14,
+    "V2_atr_pct_tiers": [
+      {"price_min": 3.0, "price_max": 20.0, "atr_pct_min": 4.0},
+      {"price_min": 20.0, "price_max": 50.0, "atr_pct_min": 3.0},
+      {"price_min": 50.0, "price_max": 100.0, "atr_pct_min": 2.0},
+      {"price_min": 100.0, "price_max": null, "atr_pct_min": 1.5}
+    ]
   },
 
-  "intraday_filters": {
-    "I1_above_premarket_high": true,
-    "I2_above_today_hod": true,
-    "I3_rvol_min": 2.0,
-    "I3_rvol_lookback_days": 14
+  "entry_confluence": {
+    "rsi_period": 14,
+    "rsi_rising_bars": 3,
+    "ema_period": 20
+  },
+
+  "entry_models": {
+    "breakout": {"enabled": true},
+    "retest": {"enabled": true}
   },
 
   "time_filter": {
-    "earliest_entry_et": "10:05",
-    "latest_entry_et": "15:30",
+    "earliest_entry_et": "09:50",
+    "latest_entry_et": "11:30",
     "force_close_et": "15:51"
   },
 
   "exit": {
-    "initial_stop_rule": "lod_minus_1pct",
-    "breakeven_trigger_R": 1.0,
-    "post_breakeven_trail": "swing_low_5m_2_2"
+    "management_style": "no_stop_delayed_trail",
+    "trailing_trigger_R": 1.20,
+    "hard_stop_R": 2.5
   },
 
   "risk": {
     "max_position_size_pct_of_portfolio": 10,
-    "max_concurrent_positions": 5
+    "max_concurrent_positions": 5,
+    "min_stop_distance_pct": 0.25,
+    "initial_stop_r_multiplier": 1.40
   }
 }

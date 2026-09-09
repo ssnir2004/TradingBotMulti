@@ -1,8 +1,8 @@
-"""yfinance market-data helpers shared by scanner.py (D1-D3/I1-I3 universe
-scan) and executor.py (live price + position-management bars) - free,
-keyless data source, no IBKR market-data subscription needed. Pulled out
-of cycle.py's own private helpers of the same shape since both processes
-need the exact same fetch conventions.
+"""yfinance market-data helpers shared by scanner.py (ORB signal scan) and
+executor.py (live price + position-management bars) - free, keyless data
+source, no IBKR market-data subscription needed. Pulled out of cycle.py's
+own private helpers of the same shape since both processes need the exact
+same fetch conventions.
 """
 from pathlib import Path
 from zoneinfo import ZoneInfo

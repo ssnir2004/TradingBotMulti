@@ -88,7 +88,7 @@ run_dashboard.py      FastAPI dashboard entry point
 strategy_config.json  seed for the single fixed strategy (strategy_config table)
 src/
   db.py               SQLite schema + all persistence
-  strategy.py          D1-D3/I1-I3 filter logic + initial-stop rules (pure)
+  strategy.py          ORB Long v4.2 signal logic + initial-stop rules (pure)
   position_mgmt.py      breakeven/trailing decision logic (pure)
   market_data.py        yfinance fetch helpers
   ibkr_client.py         thin ib_async wrapper

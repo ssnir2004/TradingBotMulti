@@ -85,7 +85,7 @@ user_gateway      (user_id PK/FK, live_port)
 user_settings     (user_id PK/FK, connected, trading_enabled,
                     portfolio_value, max_risk_pct, max_trades_per_day)
 positions         (user_id, symbol, side, entry_price, entry_time, qty,
-                    initial_stop, stop_price, stop_order_id, state, r_multiple,
+                    initial_stop, stop_price, stop_order_id, r_multiple,
                     mfe_price, mae_price, trail_activated, hold_overnight)
 trades            (user_id, timestamp, symbol, side, size, fill_price, order_id, status, exec_id)
 execution_log     (user_id, timestamp, event, payload_json)
@@ -140,8 +140,9 @@ their Executor.
 ## One Executor tick (`executor.py`'s `run_cycle`)
 
 1. Check stop-outs - always, even while paused
-2. Manage open positions (breakeven/trailing per the single strategy's
-   exit rules) - always
+2. Manage open positions (`no_stop_delayed_trail`: real hard stop at
+   entry until MFE clears `trailing_trigger_R`, then swing-low trailing
+   takes over completely - see `src/position_mgmt.py`) - always
 3. If `trading_enabled=false` -> stop here
 4. Otherwise: read `pass=true` and fresh rows from `scan_results`; for
    each, skip if already held/at today's quota/at max positions; size off
@@ -153,12 +154,30 @@ their Executor.
 
 ## Decisions made building this out
 
-- **Strategy**: the same one TradingBot runs today (`rules.json`'s "Long
-  Breakout Conservative" - D1-D3 daily filters, I1-I3 intraday filters,
-  breakeven + swing trailing exit) - seeded verbatim into
-  `strategy_config` from `strategy_config.json`. No edit UI in v1 (matches
-  "users cannot switch/edit the strategy"); an admin who needs to change it
-  can update the `strategy_config` row directly.
+- **Strategy**: **ORB Long v4.2 (Hard Stop 2.5R + Early Trailing)** -
+  the strategy actually active live in TradingBot today, not the seeded
+  `rules.json` default (an earlier pass here wrongly built against that
+  default - "Long Breakout Conservative" - before this correction).
+  Opening-range breakout/retest entry (9:30-9:45 ET range, confirm bar or
+  later retest), gated by RVOL/ATR% volatility filters and an RSI/EMA/
+  VWAP confluence check; a real -2.5R hard stop at entry, replaced
+  entirely by swing-low trailing once MFE clears +1.20R. Ported from
+  TradingBot's `src/orb.py`/`src/db.py`'s `EXTRA_STRATEGY_PRESETS` entry
+  of the same name - see `src/strategy.py`. No edit UI in v1 (matches
+  "users cannot switch/edit the strategy"); an admin who needs to change
+  it can update the `strategy_config` row directly.
+  Two simplifications from the source preset, both documented no-ops
+  against its actual LIVE behavior (not its backtest-only behavior):
+  `custom_universe: "sp500_marketcap_1b"` is scanned as the plain S&P 500
+  list instead (every constituent already exceeds $1B by the index's own
+  inclusion bar), and `risk.position_size_multiplier` is dropped (TradingBot's
+  own live `cycle.py` never actually reads this field - only its
+  backtester does).
+- **ES VWAP filter**: wired but off by default (`executor.py`'s
+  `ES_VWAP_FILTER_ENABLED`), matching TradingBot's own live behavior
+  today (no connected account has real CME futures entitlement, so it's
+  never actually enabled there either) - flipping it on later needs no
+  code change.
 - **Admin trades too**: the admin has their own `positions`/
   `user_settings`/Gateway/Executor exactly like every other user, plus the
   two extra admin screens - not a pure oversight role.

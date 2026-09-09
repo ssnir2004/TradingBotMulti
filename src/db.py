@@ -18,11 +18,6 @@ DB_PATH = PROJECT_DIR / "tradingbotmulti.db"
 
 ROLES = ("admin", "trader")
 
-# Positions never live unmanaged: a fresh entry starts here, flips to
-# post_breakeven once price clears strategy_config's own
-# exit.breakeven_trigger_R (see src/position_mgmt.py).
-INITIAL_POSITION_STATE = "pre_breakeven"
-
 FIRST_GATEWAY_PORT = 5001  # arbitrary, just needs to not collide with anything else on the box
 
 
@@ -79,7 +74,6 @@ CREATE TABLE IF NOT EXISTS positions (
     initial_stop REAL NOT NULL,
     stop_price REAL NOT NULL,
     stop_order_id INTEGER,
-    state TEXT NOT NULL DEFAULT 'pre_breakeven',
     r_multiple REAL NOT NULL DEFAULT 0,
     mfe_price REAL,
     mae_price REAL,
@@ -515,7 +509,7 @@ def get_open_positions(user_id: int) -> list[dict]:
 
 _POSITION_COLUMNS = (
     "symbol", "side", "entry_price", "entry_time", "qty", "initial_stop", "stop_price",
-    "stop_order_id", "state", "r_multiple", "mfe_price", "mae_price", "trail_activated", "hold_overnight",
+    "stop_order_id", "r_multiple", "mfe_price", "mae_price", "trail_activated", "hold_overnight",
 )
 
 
