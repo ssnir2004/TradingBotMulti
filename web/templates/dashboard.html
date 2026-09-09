@@ -126,9 +126,19 @@ async function refreshMe() {
   renderConnectSection(data);
 }
 
+let credsFormRendered = false;
+
 function renderConnectSection(data) {
   const el = document.getElementById('connect-section');
   if (!data.has_credentials) {
+    // Rendered ONCE and then left alone - refreshMe() polls every 15s and
+    // was previously overwriting this innerHTML on every poll, wiping out
+    // whatever the user had typed into the username/password fields
+    // mid-edit (a real bug found live: fields kept clearing every few
+    // seconds). Nothing here needs live updates until has_credentials
+    // actually flips true (the form submit itself triggers that refresh).
+    if (credsFormRendered) return;
+    credsFormRendered = true;
     el.innerHTML = `
       <p class="muted">Connect your live IBKR account to start trading.</p>
       <form id="creds-form">
@@ -145,6 +155,7 @@ function renderConnectSection(data) {
     });
     return;
   }
+  credsFormRendered = false;
 
   const gw = data.gateway_status || {};
   const gatewayUp = !!gw.gateway_active;
