@@ -173,8 +173,12 @@ their Executor.
 
 ## Still open (raised in the original plan, unresolved / deferred)
 
-- Exact deploy specifics for whichever server this actually lands on
+- Exact one-time provisioning on whichever server this actually lands on
   (systemd unit installation, Caddy/DuckDNS domain, IBC/TWS install paths)
   - `deploy/` ships the templates; the paths inside assume `/opt/
     tradingbotmulti` and a `tradingbotmulti` system user, matching
-    TradingBot's own convention.
+    TradingBot's own convention. Once that's done once, by hand,
+    `.github/workflows/deploy.yml` takes over shipping code changes (see
+    README.md's "Continuous deployment" section) - it deliberately only
+    restarts the two shared/stateless processes, never a connected user's
+    live Gateway/Executor.

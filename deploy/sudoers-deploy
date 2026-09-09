@@ -1,0 +1,25 @@
+# Scoped sudo rules for the GitHub Actions deploy user (see
+# .github/workflows/deploy.yml). Lets that SSH user restart ONLY the two
+# shared/stateless processes - scanner.service and dashboard.service -
+# with no password and no other command access. It deliberately does NOT
+# grant restart rights on ibgateway-live@*/executor@* (those hold live
+# IBKR sessions - see deploy.yml's own docstring for why the workflow
+# never touches them) or on anything else.
+#
+# This is a SEPARATE system user from `tradingbotmulti` (which runs the
+# processes themselves and holds the narrower dashboard-side sudoers in
+# deploy/sudoers-tradingbotmulti) - the deploy user only needs to bounce
+# services, never to run them or provision Gateways.
+#
+# Install:
+#   sudo useradd -r -m -s /bin/bash deploy   # or reuse an existing deploy account
+#   # add the GitHub Actions public key to ~deploy/.ssh/authorized_keys
+#   sudo cp deploy/sudoers-deploy /etc/sudoers.d/deploy
+#   sudo chmod 440 /etc/sudoers.d/deploy
+#   sudo visudo -c   # validates syntax before it's trusted
+#
+# If `which systemctl` on your server prints a different path than
+# /usr/bin/systemctl, update the paths below to match before installing.
+
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart scanner.service
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart dashboard.service

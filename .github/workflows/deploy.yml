@@ -1,0 +1,78 @@
+name: Deploy to server
+
+# Live-money system - deliberately narrow in what it touches automatically.
+# On every push to main: SSH to the server, pull the new code, reinstall
+# deps, and restart ONLY the two shared/stateless processes (scanner,
+# dashboard). It never restarts ibgateway-live@*/executor@* - those hold
+# live IBKR sessions for connected users, and bouncing them on every push
+# would force a fresh 2FA approval / interrupt live position management
+# for everyone, every time. Picking up an executor.py/strategy code change
+# for an already-connected user is a deliberate, separate action - restart
+# their executor@<user_id>.service by hand (ideally outside market hours),
+# or from the dashboard once/if a restart control is added there.
+#
+# Assumes the server is already provisioned per README.md/docs/
+# architecture.md (Python/venv, IBC+Xvfb+IB Gateway, systemd units,
+# sudoers, Caddy already installed) - this workflow only ships code.
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   DEPLOY_HOST      server hostname or IP
+#   DEPLOY_USER      SSH user (see deploy/sudoers-deploy - needs passwordless
+#                    sudo for exactly `systemctl restart scanner.service`
+#                    and `systemctl restart dashboard.service`, nothing more)
+#   DEPLOY_SSH_KEY   private key matching an authorized_keys entry for that user
+#   DEPLOY_PORT      optional, defaults to 22
+# If /opt/tradingbotmulti isn't the actual path on your server, update
+# DEPLOY_PATH below to match.
+
+"on":
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  DEPLOY_PATH: /opt/tradingbotmulti
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          envs: DEPLOY_PATH
+          script: |
+            set -euo pipefail
+            cd "$DEPLOY_PATH"
+
+            echo "== fetching origin/main =="
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "== installing dependencies =="
+            source .venv/bin/activate
+            pip install -q -r requirements.txt
+
+            echo "== restarting shared processes =="
+            sudo systemctl restart scanner.service
+            sudo systemctl restart dashboard.service
+
+            echo "== health check =="
+            sleep 3
+            if curl -sf http://127.0.0.1:8000/login > /dev/null; then
+              echo "Dashboard responded OK"
+            else
+              echo "Dashboard health check FAILED - recent logs:"
+              sudo journalctl -u dashboard.service -n 50 --no-pager
+              exit 1
+            fi
+            systemctl is-active scanner.service dashboard.service   # status reads need no sudo
+
+            echo "== deployed $(git rev-parse --short HEAD) =="

@@ -47,6 +47,37 @@ TradingBot's own deploy convention):
 5. `deploy/ibc/` - IBC config templates; real per-user configs are
    generated automatically by `src/gateway_provisioning.py`, never hand-written.
 
+## Continuous deployment
+
+`.github/workflows/deploy.yml` runs on every push to `main` (and can also
+be fired manually from the Actions tab). It only ships CODE - it assumes
+the steps above (Python/venv, IBC+Xvfb+IB Gateway, systemd units, sudoers,
+Caddy) are already done manually, once, on the server - and it only
+restarts `scanner.service`/`dashboard.service`. It deliberately never
+restarts `ibgateway-live@*`/`executor@*` - those hold live IBKR sessions
+for connected users, and bouncing them on every push would force a fresh
+2FA approval and interrupt live position management for everyone. Restart
+a specific user's `executor@<user_id>.service` by hand when its own code
+actually changed (ideally outside market hours).
+
+Setup, one time:
+
+1. Create a dedicated `deploy` system user on the server and add the
+   GitHub Actions runner's public key to its `~/.ssh/authorized_keys`.
+2. Install `deploy/sudoers-deploy` (see that file's own header) - grants
+   that user passwordless sudo for exactly `systemctl restart
+   scanner.service` and `systemctl restart dashboard.service`, nothing else.
+3. In the GitHub repo, add these under Settings -> Secrets and variables
+   -> Actions -> **Secrets**:
+   - `DEPLOY_HOST` - server hostname/IP
+   - `DEPLOY_USER` - `deploy` (or whatever you named it)
+   - `DEPLOY_SSH_KEY` - the matching private key
+   - `DEPLOY_PORT` - optional, defaults to 22
+4. If the server checkout isn't at `/opt/tradingbotmulti`, update
+   `DEPLOY_PATH` at the top of `.github/workflows/deploy.yml`.
+5. Push to `main` (this repo currently only has `claude/task-xaly0d` -
+   merge it into `main` to get deploys going).
+
 ## Repository layout
 
 ```
