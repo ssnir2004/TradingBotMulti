@@ -20,22 +20,33 @@ body {
 }
 .container { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
 .topnav {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px;
   padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--border);
 }
 .brand { font-weight: 700; letter-spacing: 0.3px; }
-.nav-links a { color: var(--muted); text-decoration: none; margin-right: 18px; }
+.nav-links a { color: var(--muted); text-decoration: none; margin-right: 18px; display: inline-block; padding: 4px 0; }
 .nav-links a:hover { color: var(--text); }
-.nav-user { color: var(--muted); display: flex; align-items: center; gap: 12px; }
+.nav-user { color: var(--muted); display: flex; align-items: center; gap: 12px; font-size: 13px; }
 .link-btn { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; font: inherit; }
+@media (max-width: 640px) {
+  /* Three inline groups (brand/links/user) don't fit one row on a phone -
+     wrap onto their own lines instead of overflowing or clipping. */
+  .topnav { flex-direction: column; align-items: flex-start; }
+  .nav-links { width: 100%; }
+}
 
 h1, h2, h3 { font-weight: 600; }
 .card {
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
   padding: 18px 20px; margin-bottom: 20px;
+  /* Every data table on this site lives inside a .card - this is the one
+     rule that keeps a wide table (the scan table especially, 12 columns)
+     scrolling horizontally within its own card on a phone instead of
+     forcing the whole page to scroll sideways. */
+  overflow-x: auto;
 }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 th { color: var(--muted); font-weight: 500; }
 tr:last-child td { border-bottom: none; }
 
@@ -66,5 +77,5 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .form-card { max-width: 380px; margin: 60px auto; }
 .error { color: var(--red); margin-top: 8px; }
 .muted { color: var(--muted); }
-.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
 .toggle-row { display: flex; align-items: center; gap: 10px; margin: 12px 0; }
